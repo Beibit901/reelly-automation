@@ -48,7 +48,12 @@ class Page:
         )
 
     def wait_until_clickable_click(self, *locator):
-        self.wait_until_clickable(*locator).click()
+        element = self.wait_until_clickable(*locator)
+        self.driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center', inline: 'nearest'});",
+            element
+        )
+        self.driver.execute_script("arguments[0].click();", element)
 
     def wait_until_url_contains(self, expected_partial_url):
         self.wait.until(
