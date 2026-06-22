@@ -1,5 +1,7 @@
+import json
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 from selenium import webdriver
 
@@ -18,8 +20,34 @@ def load_local_env():
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def browser_init(context):
+def get_browserstack_driver(scenario_name):
+    username = os.getenv('BROWSERSTACK_USERNAME')
+    access_key = os.getenv('BROWSERSTACK_ACCESS_KEY')
+    if not username or not access_key:
+        raise ValueError('Set BROWSERSTACK_USERNAME and BROWSERSTACK_ACCESS_KEY in .env')
+
+    options = webdriver.ChromeOptions()
+    options.set_capability('browserName', os.getenv('BROWSERSTACK_BROWSER', 'Chrome'))
+    options.set_capability('browserVersion', os.getenv('BROWSERSTACK_BROWSER_VERSION', 'latest'))
+    options.set_capability('bstack:options', {
+        'os': os.getenv('BROWSERSTACK_OS', 'Windows'),
+        'osVersion': os.getenv('BROWSERSTACK_OS_VERSION', '11'),
+        'projectName': os.getenv('BROWSERSTACK_PROJECT', 'Reelly Automation'),
+        'buildName': os.getenv('BROWSERSTACK_BUILD', 'Task 4 BrowserStack'),
+        'sessionName': scenario_name,
+    })
+
+    url = f"https://{quote(username)}:{quote(access_key)}@hub-cloud.browserstack.com/wd/hub"
+    return webdriver.Remote(command_executor=url, options=options)
+
+
+def browser_init(context, scenario):
     load_local_env()
+    if os.getenv('RUN_ON_BROWSERSTACK', 'false').lower() == 'true':
+        context.driver = get_browserstack_driver(scenario.name)
+        context.app = Application(context.driver)
+        return
+
     browser = os.getenv('BROWSER', 'chrome').lower()
     headless = os.getenv('HEADLESS', 'true').lower() != 'false'
 
@@ -50,7 +78,7 @@ def browser_init(context):
 
 def before_scenario(context, scenario):
     print('\nStarted scenario: ', scenario.name)
-    browser_init(context)
+    browser_init(context, scenario)
 
 
 def before_step(context, step):
@@ -62,6 +90,19 @@ def after_step(context, step):
         print('\nStep failed: ', step)
 
 
-def after_scenario(context, feature):
+def after_scenario(context, scenario):
+    if os.getenv('RUN_ON_BROWSERSTACK', 'false').lower() == 'true':
+        status = 'passed' if scenario.status.name == 'passed' else 'failed'
+        reason = 'Scenario passed' if status == 'passed' else f'Scenario {scenario.status.name}'
+        context.driver.execute_script(
+            'browserstack_executor: {}'.format(json.dumps({
+                'action': 'setSessionStatus',
+                'arguments': {
+                    'status': status,
+                    'reason': reason,
+                }
+            }))
+        )
+
     context.driver.delete_all_cookies()
     context.driver.quit()
